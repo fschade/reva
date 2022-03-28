@@ -51,7 +51,7 @@ require (
 	github.com/nats-io/nats-server/v2 v2.7.2
 	github.com/nats-io/nats-streaming-server v0.24.1
 	github.com/onsi/ginkgo v1.16.5
-	github.com/onsi/gomega v1.18.0
+	github.com/onsi/gomega v1.19.0
 	github.com/pkg/errors v0.9.1
 	github.com/pkg/xattr v0.4.5
 	github.com/pquerna/cachecontrol v0.1.0 // indirect
@@ -78,7 +78,7 @@ require (
 	golang.org/x/oauth2 v0.0.0-20211005180243-6b3c2da341f1
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
 	golang.org/x/sys v0.0.0-20220114195835-da31bd327af9
-	golang.org/x/term v0.0.0-20210916214954-140adaaadfaf
+	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211
 	google.golang.org/genproto v0.0.0-20211021150943-2b146023228c
 	google.golang.org/grpc v1.42.0
 	google.golang.org/protobuf v1.27.1
