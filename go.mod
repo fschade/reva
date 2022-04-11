@@ -60,7 +60,7 @@ require (
 	github.com/rs/zerolog v1.26.1
 	github.com/sciencemesh/meshdirectory-web v1.0.4
 	github.com/sethvargo/go-password v0.2.0
-	github.com/stretchr/testify v1.7.0
+	github.com/stretchr/testify v1.7.1
 	github.com/studio-b12/gowebdav v0.0.0-20210917133250-a3a86976a1df
 	github.com/thanhpk/randstr v1.0.4
 	github.com/tidwall/pretty v1.2.0 // indirect
@@ -70,10 +70,10 @@ require (
 	go.mongodb.org/mongo-driver v1.7.2 // indirect
 	go.opencensus.io v0.23.0
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.28.0
-	go.opentelemetry.io/otel v1.3.0
+	go.opentelemetry.io/otel v1.6.3
 	go.opentelemetry.io/otel/exporters/jaeger v1.3.0
-	go.opentelemetry.io/otel/sdk v1.3.0
-	go.opentelemetry.io/otel/trace v1.3.0
+	go.opentelemetry.io/otel/sdk v1.6.3
+	go.opentelemetry.io/otel/trace v1.6.3
 	golang.org/x/crypto v0.0.0-20220112180741-5e0467b6c7ce
 	golang.org/x/oauth2 v0.0.0-20211005180243-6b3c2da341f1
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
