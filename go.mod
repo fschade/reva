@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go v1.44.175
 	github.com/beevik/etree v1.1.0
 	github.com/bluele/gcache v0.0.2
-	github.com/c-bata/go-prompt v0.2.5
+	github.com/c-bata/go-prompt v0.2.6
 	github.com/cenkalti/backoff v2.2.1+incompatible
 	github.com/ceph/go-ceph v0.15.0
 	github.com/cheggaaa/pb v1.0.29
@@ -133,7 +133,7 @@ require (
 	github.com/oklog/ulid v1.3.1 // indirect
 	github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
-	github.com/pkg/term v1.1.0 // indirect
+	github.com/pkg/term v1.2.0-beta.2 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/pquerna/cachecontrol v0.1.0 // indirect
 	github.com/prometheus/client_golang v1.13.0 // indirect
