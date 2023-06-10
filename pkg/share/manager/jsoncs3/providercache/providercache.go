@@ -25,39 +25,123 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sync"
 	"time"
 
-	collaboration "github.com/cs3org/go-cs3apis/cs3/sharing/collaboration/v1beta1"
-	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
+	cs3SharingCollaboration "github.com/cs3org/go-cs3apis/cs3/sharing/collaboration/v1beta1"
+	cs3StorageProvider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	"github.com/cs3org/reva/v2/pkg/appctx"
 	"github.com/cs3org/reva/v2/pkg/errtypes"
 	"github.com/cs3org/reva/v2/pkg/storage/utils/metadata"
 	"github.com/cs3org/reva/v2/pkg/utils"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 )
 
 // name is the Tracer name used to identify this instrumentation library.
 const tracerName = "providercache"
 
-// Cache holds share information structured by provider and space
+// Cache holds share information structured by cs3StorageProvider and space
 type Cache struct {
 	Providers map[string]*Spaces
 
+	mu      sync.RWMutex
 	storage metadata.Storage
 	ttl     time.Duration
 }
 
-// Spaces holds the share information for provider
+func (c *Cache) getProvider(providerID string) *Spaces {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	return c.Providers[providerID]
+}
+
+func (c *Cache) addProvider(providerID string, provider *Spaces) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.Providers[providerID] = provider
+}
+
+// Spaces holds the share information for cs3StorageProvider
 type Spaces struct {
 	Spaces map[string]*Shares
+
+	mu sync.RWMutex
+}
+
+func (s *Spaces) getSpace(spaceID string) *Shares {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.Spaces[spaceID]
+}
+
+func (s *Spaces) addSpace(spaceID string, space *Shares) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.Spaces[spaceID] = space
 }
 
 // Shares holds the share information of one space
 type Shares struct {
-	Shares   map[string]*collaboration.Share
-	Mtime    time.Time
+	Shares map[string]*cs3SharingCollaboration.Share
+	Mtime  time.Time
+
+	mu       sync.RWMutex
 	nextSync time.Time
+}
+
+func (s *Shares) getShare(shareID string) *cs3SharingCollaboration.Share {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.Shares[shareID]
+}
+
+func (s *Shares) addShare(shareID string, share *cs3SharingCollaboration.Share) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.Shares[shareID] = share
+}
+
+func (s *Shares) getMtime() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.Mtime
+}
+
+func (s *Shares) setMtime(t time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.Mtime = t
+}
+
+func (s *Shares) getNextSync() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.nextSync
+}
+
+func (s *Shares) setNextSync(t time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.nextSync = t
+}
+
+func (s *Shares) deleteShare(shareID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.Shares, shareID)
 }
 
 // UnmarshalJSON overrides the default unmarshaling
@@ -75,26 +159,36 @@ func (s *Shares) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	s.Mtime = tmp.Mtime
-	s.Shares = make(map[string]*collaboration.Share, len(tmp.Shares))
+	shares := make(map[string]*cs3SharingCollaboration.Share, len(tmp.Shares))
+
 	for id, genericShare := range tmp.Shares {
-		userShare := &collaboration.Share{
-			Grantee: &provider.Grantee{Id: &provider.Grantee_UserId{}},
+		userShare := &cs3SharingCollaboration.Share{
+			Grantee: &cs3StorageProvider.Grantee{Id: &cs3StorageProvider.Grantee_UserId{}},
 		}
+
 		err = json.Unmarshal(genericShare, userShare) // is this a user share?
-		if err == nil && userShare.Grantee.Type == provider.GranteeType_GRANTEE_TYPE_USER {
+		if err == nil && userShare.Grantee.Type == cs3StorageProvider.GranteeType_GRANTEE_TYPE_USER {
 			s.Shares[id] = userShare
 			continue
 		}
 
-		groupShare := &collaboration.Share{
-			Grantee: &provider.Grantee{Id: &provider.Grantee_GroupId{}},
+		groupShare := &cs3SharingCollaboration.Share{
+			Grantee: &cs3StorageProvider.Grantee{Id: &cs3StorageProvider.Grantee_GroupId{}},
 		}
+
 		err = json.Unmarshal(genericShare, groupShare) // try to unmarshal to a group share if the user share unmarshalling failed
 		if err != nil {
 			return err
 		}
-		s.Shares[id] = groupShare
+
+		shares[id] = groupShare
+	}
+
+	{
+		s.mu.Lock()
+		s.Shares = shares
+		s.Mtime = tmp.Mtime
+		s.mu.Unlock()
 	}
 
 	return nil
@@ -110,7 +204,7 @@ func New(s metadata.Storage, ttl time.Duration) Cache {
 }
 
 // Add adds a share to the cache
-func (c *Cache) Add(ctx context.Context, storageID, spaceID, shareID string, share *collaboration.Share) error {
+func (c *Cache) Add(ctx context.Context, storageID, spaceID, shareID string, share *cs3SharingCollaboration.Share) error {
 	ctx, span := appctx.GetTracerProvider(ctx).Tracer(tracerName).Start(ctx, "Add")
 	defer span.End()
 	span.SetAttributes(attribute.String("cs3.storageid", storageID), attribute.String("cs3.spaceid", spaceID), attribute.String("cs3.shareid", shareID))
@@ -123,8 +217,11 @@ func (c *Cache) Add(ctx context.Context, storageID, spaceID, shareID string, sha
 	case shareID == "":
 		return fmt.Errorf("missing share id")
 	}
+
 	c.initializeIfNeeded(storageID, spaceID)
-	c.Providers[storageID].Spaces[spaceID].Shares[shareID] = share
+
+	_, space, _ := c.get(storageID, spaceID, "")
+	space.addShare(shareID, share)
 
 	return c.Persist(ctx, storageID, spaceID)
 }
@@ -135,30 +232,30 @@ func (c *Cache) Remove(ctx context.Context, storageID, spaceID, shareID string) 
 	defer span.End()
 	span.SetAttributes(attribute.String("cs3.storageid", storageID), attribute.String("cs3.spaceid", spaceID), attribute.String("cs3.shareid", shareID))
 
-	if c.Providers[storageID] == nil ||
-		c.Providers[storageID].Spaces[spaceID] == nil {
+	_, space, _ := c.get(storageID, spaceID, "")
+	if space == nil {
 		return nil
 	}
-	delete(c.Providers[storageID].Spaces[spaceID].Shares, shareID)
+
+	space.deleteShare(shareID)
 
 	return c.Persist(ctx, storageID, spaceID)
 }
 
 // Get returns one entry from the cache
-func (c *Cache) Get(storageID, spaceID, shareID string) *collaboration.Share {
-	if c.Providers[storageID] == nil ||
-		c.Providers[storageID].Spaces[spaceID] == nil {
-		return nil
-	}
-	return c.Providers[storageID].Spaces[spaceID].Shares[shareID]
+func (c *Cache) Get(storageID, spaceID, shareID string) *cs3SharingCollaboration.Share {
+	_, _, share := c.get(storageID, spaceID, shareID)
+	return share
 }
 
 // ListSpace returns the list of shares in a given space
 func (c *Cache) ListSpace(storageID, spaceID string) *Shares {
-	if c.Providers[storageID] == nil || c.Providers[storageID].Spaces[spaceID] == nil {
+	_, space, _ := c.get(storageID, spaceID, "")
+	if space == nil {
 		return &Shares{}
 	}
-	return c.Providers[storageID].Spaces[spaceID]
+
+	return space
 }
 
 // PersistWithTime persists the data of one space if it has not been modified since the given mtime
@@ -167,33 +264,40 @@ func (c *Cache) PersistWithTime(ctx context.Context, storageID, spaceID string, 
 	defer span.End()
 	span.SetAttributes(attribute.String("cs3.storageid", storageID), attribute.String("cs3.spaceid", spaceID))
 
-	if c.Providers[storageID] == nil || c.Providers[storageID].Spaces[spaceID] == nil {
+	_, space, _ := c.get(storageID, spaceID, "")
+	if space == nil {
 		return nil
 	}
 
-	oldMtime := c.Providers[storageID].Spaces[spaceID].Mtime
-	c.Providers[storageID].Spaces[spaceID].Mtime = mtime
+	oldMtime := space.getMtime()
+	space.setMtime(mtime)
 
 	// FIXME there is a race when between this time now and the below Uploed another process also updates the file -> we need a lock
-	createdBytes, err := json.Marshal(c.Providers[storageID].Spaces[spaceID])
+	createdBytes, err := json.Marshal(space)
 	if err != nil {
-		c.Providers[storageID].Spaces[spaceID].Mtime = oldMtime
-		return err
-	}
-	jsonPath := spaceJSONPath(storageID, spaceID)
-	if err := c.storage.MakeDirIfNotExist(ctx, path.Dir(jsonPath)); err != nil {
-		c.Providers[storageID].Spaces[spaceID].Mtime = oldMtime
+		space.setMtime(oldMtime)
 		return err
 	}
 
-	if err = c.storage.Upload(ctx, metadata.UploadRequest{
-		Path:              jsonPath,
-		Content:           createdBytes,
-		IfUnmodifiedSince: c.Providers[storageID].Spaces[spaceID].Mtime,
-	}); err != nil {
-		c.Providers[storageID].Spaces[spaceID].Mtime = oldMtime
+	jsonPath := spaceJSONPath(storageID, spaceID)
+	if err := c.storage.MakeDirIfNotExist(ctx, path.Dir(jsonPath)); err != nil {
+		space.setMtime(oldMtime)
 		return err
 	}
+
+	c.mu.Lock()
+	err = c.storage.Upload(ctx, metadata.UploadRequest{
+		Path:              jsonPath,
+		Content:           createdBytes,
+		IfUnmodifiedSince: mtime,
+	})
+	c.mu.Unlock()
+
+	if err != nil {
+		space.setMtime(oldMtime)
+		return err
+	}
+
 	return nil
 }
 
@@ -212,15 +316,19 @@ func (c *Cache) Sync(ctx context.Context, storageID, spaceID string) error {
 	log := appctx.GetLogger(ctx).With().Str("storageID", storageID).Str("spaceID", spaceID).Logger()
 
 	var mtime time.Time
-	if c.Providers[storageID] != nil && c.Providers[storageID].Spaces[spaceID] != nil {
-		mtime = c.Providers[storageID].Spaces[spaceID].Mtime
 
-		if time.Now().Before(c.Providers[storageID].Spaces[spaceID].nextSync) {
+	_, space, _ := c.get(storageID, spaceID, "")
+
+	if space != nil {
+		mtime = space.getMtime()
+
+		if time.Now().Before(space.getNextSync()) {
 			span.AddEvent("skip sync")
 			span.SetStatus(codes.Ok, "")
 			return nil
 		}
-		c.Providers[storageID].Spaces[spaceID].nextSync = time.Now().Add(c.ttl)
+
+		space.setNextSync(time.Now().Add(c.ttl))
 	} else {
 		mtime = time.Time{} // Set zero time so that data from storage always takes precedence
 	}
@@ -233,51 +341,93 @@ func (c *Cache) Sync(ctx context.Context, storageID, spaceID string) error {
 			span.SetStatus(codes.Ok, "")
 			return nil // Nothing to sync against
 		}
+
 		if _, ok := err.(*os.PathError); ok {
 			span.AddEvent("no dir")
 			span.SetStatus(codes.Ok, "")
 			return nil // Nothing to sync against
 		}
-		span.SetStatus(codes.Error, fmt.Sprintf("Failed to stat the provider cache: %s", err.Error()))
-		log.Error().Err(err).Msg("Failed to stat the provider cache")
+
+		span.SetStatus(codes.Error, fmt.Sprintf("Failed to stat the cs3StorageProvider cache: %s", err.Error()))
+		log.Error().Err(err).Msg("Failed to stat the cs3StorageProvider cache")
+
 		return err
 	}
+
 	// check mtime of /users/{userid}/created.json
 	if utils.TSToTime(info.Mtime).After(mtime) {
 		span.AddEvent("updating cache")
 		//  - update cached list of created shares for the user in memory if changed
 		createdBlob, err := c.storage.SimpleDownload(ctx, jsonPath)
 		if err != nil {
-			span.SetStatus(codes.Error, fmt.Sprintf("Failed to download the provider cache: %s", err.Error()))
-			log.Error().Err(err).Msg("Failed to download the provider cache")
+			span.SetStatus(codes.Error, fmt.Sprintf("Failed to download the cs3StorageProvider cache: %s", err.Error()))
+			log.Error().Err(err).Msg("Failed to download the cs3StorageProvider cache")
 			return err
 		}
+
 		newShares := &Shares{}
 		err = json.Unmarshal(createdBlob, newShares)
 		if err != nil {
-			span.SetStatus(codes.Error, fmt.Sprintf("Failed to unmarshal the provider cache: %s", err.Error()))
-			log.Error().Err(err).Msg("Failed to unmarshal the provider cache")
+			span.SetStatus(codes.Error, fmt.Sprintf("Failed to unmarshal the cs3StorageProvider cache: %s", err.Error()))
+			log.Error().Err(err).Msg("Failed to unmarshal the cs3StorageProvider cache")
 			return err
 		}
+
 		newShares.Mtime = utils.TSToTime(info.Mtime)
 		c.initializeIfNeeded(storageID, spaceID)
-		c.Providers[storageID].Spaces[spaceID] = newShares
+		c.getProvider(storageID).addSpace(spaceID, newShares)
 	}
+
 	span.SetStatus(codes.Ok, "")
+
 	return nil
 }
 
 func (c *Cache) initializeIfNeeded(storageID, spaceID string) {
-	if c.Providers[storageID] == nil {
-		c.Providers[storageID] = &Spaces{
+	if c.getProvider(storageID) == nil {
+		c.addProvider(storageID, &Spaces{
 			Spaces: map[string]*Shares{},
-		}
+		})
 	}
-	if c.Providers[storageID].Spaces[spaceID] == nil {
-		c.Providers[storageID].Spaces[spaceID] = &Shares{
-			Shares: map[string]*collaboration.Share{},
-		}
+
+	provider, space, _ := c.get(storageID, spaceID, "")
+	if space == nil {
+		provider.addSpace(spaceID, &Shares{
+			Shares: map[string]*cs3SharingCollaboration.Share{},
+		})
 	}
+}
+
+func (c *Cache) get(providerID, spaceID, shareID string) (*Spaces, *Shares, *cs3SharingCollaboration.Share) {
+
+	if providerID == "" {
+		return nil, nil, nil
+	}
+
+	provider := c.getProvider(providerID)
+	if provider == nil {
+		return nil, nil, nil
+	}
+
+	if spaceID == "" {
+		return provider, nil, nil
+	}
+
+	space := provider.getSpace(spaceID)
+	if space == nil {
+		return provider, nil, nil
+	}
+
+	if shareID == "" {
+		return provider, space, nil
+	}
+
+	share := space.getShare(shareID)
+	if space == nil {
+		return provider, space, nil
+	}
+
+	return provider, space, share
 }
 
 func spaceJSONPath(storageID, spaceID string) string {

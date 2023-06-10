@@ -70,6 +70,7 @@ require (
 	github.com/studio-b12/gowebdav v0.0.0-20221015232716-17255f2e7423
 	github.com/test-go/testify v1.1.4
 	github.com/thanhpk/randstr v1.0.4
+	github.com/tidwall/gjson v1.14.4
 	github.com/tus/tusd v1.10.1
 	github.com/wk8/go-ordered-map v1.0.0
 	go-micro.dev/v4 v4.9.0
@@ -193,6 +194,7 @@ require (
 	github.com/shurcooL/vfsgen v0.0.0-20200824052919-0d455de96546 // indirect
 	github.com/sirupsen/logrus v1.9.0 // indirect
 	github.com/stretchr/objx v0.5.0 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/urfave/cli/v2 v2.25.1 // indirect
 	github.com/xanzy/ssh-agent v0.3.2 // indirect
